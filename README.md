@@ -1,3 +1,12 @@
+---
+license: apache-2.0
+language:
+- en
+tags:
+- federated-learning
+- pytorch
+---
+
 # Federated-sys#  FusionNet — Project Plan & Execution Blueprint
 >| AMD Developer Hackathon ACT II
 
@@ -795,3 +804,4 @@ FusionNet inverts the equation: instead of pulling data toward AI, it pushes AI 
 
 *Document generated: June 2026 | FusionNet Project | AMD Developer Hackathon ACT II*
 *Deadline: July 11, 2026*
+

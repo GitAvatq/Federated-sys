@@ -1,7 +1,7 @@
 # prepare_data.py — Documentation
 
 
-**Purpose:** Downloads the Banking77 dataset, partitions it across 10 simulated
+This document downloads the Banking77 dataset, partitions it across 10 simulated
 clients (IID and Non-IID), and assigns realistic hardware resource profiles to
 each client — matching the experimental setup in the HAFLQ paper
 
@@ -10,30 +10,51 @@ each client — matching the experimental setup in the HAFLQ paper
 ## Quick Start
 
 ```bash
-pip install datasets numpy
-python data/partition_data.py
+pip install datasets numpy pandas
+python datasets/prepare_data.py
 ```
 
 Expected output:
 
 ```
 Loading Banking77 dataset...
+Cleaning data...
+Remaining samples: 9993
+Cleaning data...
+Remaining samples: 3076
 
-── IID Partition ──
+== IID Partition ===
   Client 0: 1000 samples (IID)
   Client 1: 1000 samples (IID)
+  Client 2: 1000 samples (IID)
+  Client 3: 999 samples (IID)
   ...
 
-── Non-IID Partition ──
-  Client 0: 847 samples, labels: [2, 5, 11, 34, 41]...
-  Client 1: 912 samples, labels: [8, 19, 23, 55, 60]...
+== Non-IID Partition ===
+  Client 0: 1334 samples, labels: [13, 32, 54, 59, 73]...
+  Client 1: 1216 samples, labels: [9, 10, 23, 51, 58]...
   ...
 
-Saved data/clients/iid/
-Saved data/clients/noniid/
-Saved data/dataset_summary.json
+Validating IID partition...
+  [OK] All 10 client files exist and are well-formed.
+  [OK] Total samples allocated across all clients: 9993
+  [OK] Validation for IID successful!
+
+Validating NONIID partition...
+  [OK] All 10 client files exist and are well-formed.
+  [OK] Total samples allocated across all clients: 12886
+  [OK] Clients have diverse, distinct label sets (Non-IID check passed).
+  [OK] Validation for NONIID successful!
+
+== Saving Summary & Global Test Set ===
+Saved dataset summary to .../data/dataset_summary.json
+
+
 Done! Data ready for federated training.
 ```
+
+> [!NOTE]
+> Banking77 training data has exactly 10,003 samples. Dividing this among 10 clients results in an uneven split of 1001 samples for clients 0-2 and 1000 samples for the remaining clients.
 
 ---
 
@@ -101,7 +122,8 @@ These are at the top of the file. Change them to adjust the simulation.
 | Constant                  | Default | Meaning                                      |
 |---------------------------|---------|----------------------------------------------|
 | `NUM_CLIENTS`             | `10`    | Number of simulated federated clients        |
-| `LABELS_PER_CLIENT_NONIID`| `8`     | How many of 77 labels each client sees       |
+| `LABELS_PER_CLIENT_NONIID`| `20`    | How many of 77 labels each client sees (HAFLQ convergence standard) |
+| `SAMPLES_PER_LABEL_RATIO` | `0.5`   | Fraction of samples per label assigned to a client |
 | `OUTPUT_DIR`              | `data/clients` | Where JSON files are saved          |
 | `SEED`                    | `42`    | Random seed — keeps results reproducible     |
 
@@ -133,13 +155,12 @@ Each pile is random so label distribution is roughly equal across clients.
 
 ### Non-IID (Real World Scenario)
 
-Each client only sees data from 8 out of 77 labels. This simulates reality —
+Each client only sees data from 20 out of 77 labels. This simulates reality —
 different bank branches serve different customer types.
 
 ```
-Client 0: 847 samples  — only sees labels [2, 5, 11, 34, 41, 55, 63, 70]
-Client 1: 912 samples  — only sees labels [8, 19, 23, 45, 55, 61, 68, 74]
-Client 2: 780 samples  — only sees labels [3, 14, 27, 38, 50, 59, 65, 72]
+Client 0: 2315 samples  — only sees labels [2, 5, 11, 14, 22, 27, 34, 39, 41, ...]
+Client 1: 2190 samples  — only sees labels [8, 19, 23, 31, 38, 45, 50, 55, 60, ...]
 ...
 ```
 
@@ -183,7 +204,7 @@ Each client is assigned a resource profile matching the HAFLQ paper
 
 | Tier   | Clients | LoRA Rank | Freeze Ratio | Distance      |
 |--------|---------|-----------|--------------|---------------|
-| Low    | 0, 1, 2 | 2         | 0.75         | 1100–1300 m   |
+| Low    | 0, 1, 2 | 2         | 0.50         | 1100–1300 m   |
 | Medium | 3, 4, 5 | 4         | 0.50         | 1400–1600 m   |
 | High   | 6, 7, 8, 9 | 8      | 0.00         | 1700–2000 m   |
 
@@ -252,17 +273,14 @@ the 2 most important ones. The global model retains all 8 dimensions —
 nothing is lost.
 
 ```
-freeze_ratio = 0.75 → 75% of rank-1 matrices are frozen
-                     → only 25% are actively trained
-                     → for rank 8: freeze 6, train 2
-
-freeze_ratio = 0.50 → freeze 4 out of 8, train 4
+freeze_ratio = 0.50 → 50% of rank-1 matrices are frozen
+                     → for rank 2: freeze 1, train 1
+                     → for rank 4: freeze 2, train 2
 
 freeze_ratio = 0.00 → freeze nothing, train all 8
 ```
 
-The server tells clients which rank-1 matrices are most important
-(using importance scores) so clients always freeze the least important ones.
+The server tells clients which rank-1 matrices are most important (using importance scores) so clients always freeze the least important ones. Low-tier clients use `lora_rank = 2` with `freeze_ratio = 0.5` to train exactly 1 rank-1 component. Trainable component count is calculated as `max(1, int(round((1 - freeze_ratio) * lora_rank)))`.
 
 ---
 
@@ -300,7 +318,10 @@ max_bits_mb = round(10.0 * (2000 - distance_m) / 900, 2)
 | 0      | 1100 m   | 10.00 MB   |
 | 3      | 1400 m   | 6.67 MB    |
 | 6      | 1700 m   | 3.33 MB    |
-| 9      | 2000 m   | 0.00 MB    |
+| 9      | 2000 m   | 0.50 MB    |
+
+> [!NOTE]
+> Client 9's bandwidth is bound by a minimum communication floor of 0.5 MB so it can still upload updates.
 
 This value is used in `run_mvp.py` to simulate the importance-aware
 bandwidth-adaptive quantization: clients with low bandwidth must compress
@@ -403,6 +424,11 @@ double-checking the setup is correct.
 | FedAvg baseline     | DFL Survey    | Section II-A   |
 
 ---
+
+## What This Script Does NOT Do
+
+- **Tokenization:** Raw sentences are stored as strings in JSON. Client trainers (e.g., `local_trainer.py`) must tokenize them at runtime using their model's specific tokenizer (e.g., `AutoTokenizer.from_pretrained(...)`), applying appropriate BOS tokens, padding, truncation, and attention masks.
+- **Label Alignment/Head Mapping:** Labels are saved as raw integer indices (0-76). The local training loop must choose whether to use sequence classification (adding a classification head with `AutoModelForSequenceClassification`) or generative classification (prompting the model and parsing the generated output).
 
 ## Common Errors
 
